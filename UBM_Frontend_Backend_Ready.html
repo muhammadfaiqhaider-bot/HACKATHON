@@ -87,7 +87,7 @@ const seed=()=>{const L=[['l1','Hana Mori','Brightwave Studio','Website','New','
 const leads=L.map(r=>({id:r[0],name:r[1],company:r[2],source:r[3],stage:r[4],priority:r[5],owner:r[6],ack:r[7],created:ago(r[8]),last:ago(r[9]),follow:inD(r[10]),value:r[11],email:r[1].split(' ')[0].toLowerCase()+'@example.com'}));
 const acts=[];leads.forEach(l=>{acts.push({id:'a'+acts.length,lead:l.id,type:'Created',text:'Lead created from '+l.source,who:'System',at:l.created});if(l.last)acts.push({id:'a'+acts.length,lead:l.id,type:'Call',text:'Logged call (manual record)',who:l.owner?mem(l.owner).name:'System',at:l.last})});
 const pay=[['PR-1001','l5','Proposal deposit',5000,'USD','Pending',4,-2],['PR-1002','l9','Onboarding package',5400,'USD','Paid',20,-10],['PR-1003','l11','Retainer – Q4',3800,'EUR','Pending',6,3],['PR-1004','l3','Pilot project',7500,'USD','Failed',9,-4],['PR-1005','l4','Trial membership',900,'USD','Draft',1,7]].map(p=>({id:p[0],lead:p[1],desc:p[2],amt:p[3],cur:p[4],status:p[5],created:ago(p[6]*24),due:inD(p[7])}));
-const integ=[{id:'wa',name:'WhatsApp Business',desc:'Messaging provider',status:'Not configured',sync:null,issue:'Requires a real Twilio webhook and verified provider credentials'},{id:'st',name:'Stripe',desc:'Payment workflows',status:'Attention required',sync:ago(30),issue:'Webhook signature check pending'},{id:'gc',name:'Google Calendar',desc:'Appointment sync',status:'Disconnected',sync:ago(120),issue:'Authorization expired'},{id:'sl',name:'Slack',desc:'Team notifications',status:'Not configured',sync:null,issue:'Requires real provider setup'}];
+const integ=[{id:'wa',name:'WhatsApp Business',desc:'Messaging provider',status:'Not configured',sync:null,issue:'Requires a real Twilio webhook and verified provider credentials'},{id:'st',name:'Stripe',desc:'Payment workflows',status:'Not configured',sync:null,issue:'Requires Stripe test-mode API and verified webhook'},{id:'gc',name:'Google Calendar',desc:'Appointment sync',status:'Not configured',sync:null,issue:'Requires Google OAuth and calendar integration'},{id:'sl',name:'Slack',desc:'Team notifications',status:'Not configured',sync:null,issue:'Requires real provider setup'}];
 const notifs=[{id:'n1',t:'Lead assigned: Luis Duarte',to:'#/leads/l2',read:false},{id:'n2',t:'Follow-up overdue: Grace Okafor',to:'#/leads/l3',read:false},{id:'n3',t:'Integration issue: Google Calendar',to:'#/integrations',read:false},{id:'n4',t:'Payment PR-1004 failed',to:'#/payments',read:true}];
 const appts=[['p1','Proposal walkthrough','l5','m3',1.2],['p2','Discovery call','l12','m4',3.1],['p3','Contract review','l11','m2',-1.1]].map(a=>({id:a[0],title:a[1],lead:a[2],owner:a[3],start:inD(a[4]),end:new Date(+inD(a[4])+H),status:a[4]<0?'Completed':'Scheduled'}));
 const cos=[...new Set(leads.map(l=>l.company))].map((n,i)=>({id:'co'+(i+1),name:n,website:'www.'+n.split(' ')[0].toLowerCase().replace(/[^a-z]/g,'')+'.example',industry:['Services','Retail','Health','Logistics'][i%4],size:['1-10','11-50','51-200'][i%3],location:['Berlin','Austin','Lisbon','Toronto'][i%4],owner:leads.find(l=>l.company==n).owner,notes:'',archived:false}));
@@ -100,7 +100,7 @@ return{leads,acts,pay,integ,notifs,appts,contacts,companies:cos,opps}};
 function mem(id){return TEAM.find(t=>t.id===id)}
 let S=seed();
 // Browser persistence is for local hackathon demonstrations only, not secure storage or a server database.
-const STORE='ubm-demo-v4';
+const STORE='ubm-demo-v5';
 const CONFIG={ackMinutes:30,openLimit:5,idleHours:72,escalationLevels:3,roundRobin:0};
 function saveDemo(){try{localStorage.setItem(STORE,JSON.stringify({data:S,team:TEAM,config:CONFIG,workspace:UI.ws}));}catch(e){console.warn('Demo persistence unavailable');}}
 function restoreDemo(){try{const raw=localStorage.getItem(STORE);if(!raw)return;const v=JSON.parse(raw);if(!v||!v.data||!Array.isArray(v.data.leads))return;
@@ -113,10 +113,10 @@ S.leads.forEach(l=>{if(l.escalations==null)l.escalations=0;if(l.owner&&!l.assign
 ownerOpts.splice(0,ownerOpts.length,['','Unassigned'],...TEAM.map(t=>[t.id,t.name]));
 }catch(e){console.warn('Could not load saved demo state',e);}}
 function validOwner(id,excludeLead){const m=mem(id);return !!m&&m.active&&!m.invited&&m.availability==='Available'&&S.leads.filter(l=>l.owner===id&&l.id!==excludeLead&&!CLOSED.includes(l.stage)).length<CONFIG.openLimit;}
-function nextOwner(excludeLead,except){const eligible=TEAM.filter(t=>validOwner(t.id,excludeLead)&&t.id!==except&&t.role!=='Owner');if(!eligible.length)return null;const i=CONFIG.roundRobin%eligible.length;CONFIG.roundRobin++;return eligible[i].id;}
-function autoAssign(id){const l=svc.lead(id);if(!l||l.owner)return;const pick=nextOwner(id);if(pick)svc.assign(id,pick,'Auto-assigned by available-capacity rotation');else svc.log(id,'Assignment exception','No available employee with remaining capacity; lead remains in recovery');}
+function nextOwner(excludeLead,except){const eligible=TEAM.filter(t=>validOwner(t.id,excludeLead)&&t.id!==except&&t.role!=='Owner'&&t.role!=='Admin');if(!eligible.length)return null;const i=CONFIG.roundRobin%eligible.length;CONFIG.roundRobin++;return eligible[i].id;}
+function autoAssign(id){const l=svc.lead(id);if(!l||l.owner)return;const pick=nextOwner(id);if(pick){svc.assign(id,pick,'Auto-assigned by available-capacity rotation');return;}const msg='No available employee with remaining capacity';if(l.exception!==msg){l.exception=msg;svc.log(id,'Assignment exception',msg+'; lead remains in recovery');}}
 function processEscalations(){let changed=0;for(const l of S.leads){if(CLOSED.includes(l.stage)||!l.owner||l.ack)continue;const assigned=l.assignedAt||l.created;if((NOW-assigned)/60000<CONFIG.ackMinutes)continue;
-const prev=l.owner,choice=nextOwner(l.id,prev);if(choice){svc.assign(l.id,choice,'Acknowledgement deadline exceeded');l.escalations=(l.escalations||0)+1;svc.log(l.id,'Escalation','Escalated from '+mem(prev).name+' to '+mem(choice).name+' (local demo simulation)');changed++;}else{l.exception='Acknowledgement deadline exceeded; no eligible replacement';}}
+const prev=l.owner,choice=nextOwner(l.id,prev);if(choice){svc.assign(l.id,choice,'Acknowledgement deadline exceeded');l.escalations=(l.escalations||0)+1;svc.log(l.id,'Escalation','Escalated from '+mem(prev).name+' to '+mem(choice).name+' (local demo simulation)');changed++;}else{const reason='Acknowledgement deadline exceeded; no eligible replacement';if(l.exception!==reason){l.exception=reason;svc.log(l.id,'Escalation exception',reason+' (demo)');changed++;}}}
 return changed;}
 const svc={lead:id=>S.leads.find(l=>l.id===id),
 log(id,type,text){S.acts.unshift({id:'a'+crypto.randomUUID(),lead:id,type,text,who:mem(ME)?.name||'System',at:new Date()})},
@@ -127,9 +127,9 @@ follow(id,d){const l=svc.lead(id);l.follow=new Date(d+'T09:00:00');svc.log(id,'F
 note(id,t){svc.lead(id).last=new Date();svc.log(id,'Note',t)},
 create(d){const id='l'+crypto.randomUUID();S.leads.unshift({id,...d,stage:'New',ack:false,ackAt:null,assignedAt:d.owner?new Date():null,escalations:0,created:new Date(),last:null,follow:null,email:d.email});svc.log(id,'Created','Lead created · '+d.source);if(!d.owner)autoAssign(id);return id},
 needs(l){const r=[];if(CLOSED.includes(l.stage))return r;const days=h=>Math.floor(h/24);
-if(!l.owner)r.push('Unassigned for '+days((NOW-l.created)/H)+'d');else if(!l.ack){const minutes=Math.max(0,Math.floor((NOW-(l.assignedAt||l.created))/60000));r.push(minutes>=CONFIG.ackMinutes?'Acknowledgement overdue by '+(minutes-CONFIG.ackMinutes)+'m':'Awaiting acknowledgement · '+Math.max(0,CONFIG.ackMinutes-minutes)+'m left');}
-if(l.follow&&l.follow<NOW)r.push('Follow-up overdue by '+Math.ceil((NOW-l.follow)/D)+'d');
-const idle=(NOW-(l.last||l.created))/H;if(idle>CONFIG.idleHours)r.push('No activity for '+days(idle)+'d');if(l.escalations>1)r.push('Escalated '+l.escalations+' times');if(l.exception)r.push(l.exception);return r}};
+if(!l.owner)r.push('Unassigned for '+Math.max(0,Math.floor((NOW-l.created)/60000))+'m');else if(!l.ack){const minutes=Math.max(0,Math.floor((NOW-(l.assignedAt||l.created))/60000));r.push(minutes>=CONFIG.ackMinutes?'Acknowledgement overdue by '+(minutes-CONFIG.ackMinutes)+'m':'Awaiting acknowledgement · '+Math.max(0,CONFIG.ackMinutes-minutes)+'m left');}
+if(l.follow&&l.follow<NOW)r.push('Follow-up overdue by '+Math.max(1,Math.ceil((NOW-l.follow)/H))+'h');
+const idle=(NOW-(l.last||l.created))/H;if(idle>CONFIG.idleHours)r.push('No activity for '+days(idle)+'d');if(l.escalations>0)r.push('Escalated '+l.escalations+' time(s)');if(l.exception)r.push(l.exception);return r}};
 // ---------- helpers ----------
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -328,5 +328,9 @@ else if(id=='su'){const e1=f.ws.trim()?'':'Required.',e2=f.name.trim()?'':'Requi
 else if(id=='ia'){if(f.pw.length<8){$('#e-ip').textContent='Password must be at least 8 characters.';return}const m=mem(f.id);m.name=f.name.trim()||m.name;m.invited=false;ownerOpts.find(o=>o[0]==m.id)[1]=m.name;enter(m.id)}
 else if(id=='iv'){if(!ok){$('#e-iv').textContent='Enter a valid email.';return}const m={id:'m'+(TEAM.length+1),email:f.email,name:f.name.trim()||f.email,role:f.role,active:true,r0:f.role,invited:true};TEAM.push(m);ownerOpts.push([m.id,m.name]);$('#dlg').close();toast('Invitation recorded (demo). No email was sent; use the demo invite link in the list.');render()}
 else if(id=='au'){$('#e-em').textContent=ok?'':'Enter a valid email.';if(!ok)return;if(f.kind=='login'){if(!f.pw){$('#e-pw').textContent='Password is required.';return}const m=TEAM.find(t=>(t.email||t.name.split(' ')[0].toLowerCase()+'@brightline.example')==f.email.toLowerCase()&&t.active&&!t.invited);if(!m){$('#e-em').textContent='No demo account with this email. Use a Demo access button.';return}enter(m.id)}else{$('#au-m').textContent='Demo only: no reset email was sent.'}}});
-window.addEventListener('hashchange',()=>{UI.nav=false;UI.np=false;render();scrollTo(0,0)});restoreDemo();render();
+window.addEventListener('hashchange',()=>{UI.nav=false;UI.np=false;render();scrollTo(0,0)});
+restoreDemo();render();
+// Demo-only interval. This is NOT a server scheduler and stops when the browser tab closes.
+setInterval(()=>{if(!UI.sess||document.visibilityState!=='visible')return;NOW=new Date();const n=processEscalations();if(n){saveDemo();render();toast(n+' lead deadline event(s) evaluated in this browser demo')}else if((location.hash||'').startsWith('#/recovery')||(location.hash||'').startsWith('#/dashboard'))render();},15000);
+
 </script></body></html>
